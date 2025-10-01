@@ -4,56 +4,114 @@ using Emgu.CV.Structure;
 using System;
 using System.Collections.Generic;
 using System.Data.SqlClient;
-using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using System.Windows.Forms;
+using static System.Net.Mime.MediaTypeNames;
 
-namespace MultiFaceRec
+namespace FaceDBApp
 {
     public partial class FrmPrincipal : Form
     {
-        // --- EmguCV ---
-        Image<Bgr, Byte> currentFrame;
-        Capture grabber;
-        HaarCascade face;
-        MCvFont font = new MCvFont(FONT.CV_FONT_HERSHEY_TRIPLEX, 0.5d, 0.5d);
-
-        Image<Gray, byte> result, TrainedFace = null;
-        Image<Gray, byte> gray = null;
-
-        List<Image<Gray, byte>> trainingImages = new List<Image<Gray, byte>>();
-        List<string> labels = new List<string>();
-        int ContTrain, NumLabels;
-        string name;
-
-        string connectionString = @"Data Source=(LocalDB)\MSSQLLocalDB;AttachDbFilename=|DataDirectory|\UsersDB.mdf;Integrated Security=True;Connect Timeout=30";
+        VideoCapture grabber;
+        Mat currentFrame;
+        CascadeClassifier face;
+        string connectionString = "";
 
         public FrmPrincipal()
         {
             InitializeComponent();
 
-            // HaarCascade yuklash
+            // Form load event qo‘shamiz
+            this.Load += FrmPrincipal_Load;
+
+            // Haarcascade yuklash
             try
             {
-                face = new HaarCascade("haarcascade_frontalface_default.xml");
+                face = new CascadeClassifier("haarcascade_frontalface_default.xml");
             }
             catch
             {
                 MessageBox.Show("Haarcascade fayli topilmadi!");
             }
+
+            // DB ulash
+            connectionString = LoadConnectionString();
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                // Default path
+                string dbFile = Path.Combine(Application.StartupPath, "FaceDB.mdf");
+                CreateDatabase(dbFile);
+                connectionString = $@"Data Source=(LocalDB)\MSSQLLocalDB;AttachDbFilename={dbFile};Integrated Security=True;Connect Timeout=30";
+                SaveConnectionString(connectionString);
+            }
+
+            EnsureTable();
         }
 
-        // --- Kamera ishga tushirish va qidirish ---
+        private void FrmPrincipal_Load(object sender, EventArgs e)
+        {
+            // Rasmlarni yumaloq qilish
+            CirclePic(g6); CirclePic(g7); CirclePic(g8); CirclePic(g9); CirclePic(g10);
+            CirclePic(r6); CirclePic(r7); CirclePic(r8); CirclePic(r9); CirclePic(r10);
+        }
+
+        public void CirclePic(PictureBox pb)
+        {
+            GraphicsPath gp = new GraphicsPath();
+            gp.AddEllipse(0, 0, pb.Width - 1, pb.Height - 1);
+            pb.Region = new Region(gp);
+            pb.SizeMode = PictureBoxSizeMode.StretchImage;
+        }
+
+        #region DB Functions
+        private void CreateDatabase(string dbFile)
+        {
+            string connStr = @"Data Source=(LocalDB)\MSSQLLocalDB;Integrated Security=True;";
+            string dbName = Path.GetFileNameWithoutExtension(dbFile);
+
+            using (SqlConnection conn = new SqlConnection(connStr))
+            {
+                conn.Open();
+                string q = $"CREATE DATABASE [{dbName}] ON PRIMARY (NAME={dbName}, FILENAME='{dbFile}')";
+                new SqlCommand(q, conn).ExecuteNonQuery();
+            }
+        }
+
+        private void EnsureTable()
+        {
+            using (SqlConnection conn = new SqlConnection(connectionString))
+            {
+                conn.Open();
+                string q = @"IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='PersonInfo' AND xtype='U')
+                             CREATE TABLE PersonInfo (
+                                Id CHAR(9) PRIMARY KEY,
+                                Familiya NVARCHAR(50),
+                                Ism NVARCHAR(50),
+                                Sharif NVARCHAR(50),
+                                Unvon NVARCHAR(50),
+                                FaceImage VARBINARY(MAX)
+                             )";
+                new SqlCommand(q, conn).ExecuteNonQuery();
+            }
+        }
+
+        private void SaveConnectionString(string cs) => File.WriteAllText("dbpath.txt", cs);
+        private string LoadConnectionString() => File.Exists("dbpath.txt") ? File.ReadAllText("dbpath.txt") : "";
+        #endregion
+
+        #region Camera & Search
         private void btnSearchPerson_Click(object sender, EventArgs e)
         {
             try
             {
                 if (grabber != null) grabber.Dispose();
-                grabber = new Capture();
-                grabber.QueryFrame();
-                Application.Idle += new EventHandler(FrameGrabber);
+                grabber = new VideoCapture(0);
+                grabber.ImageGrabbed += FrameGrabber;
+                grabber.Start();
             }
             catch (Exception ex)
             {
@@ -61,195 +119,284 @@ namespace MultiFaceRec
             }
         }
 
-        // --- Yuzni DB da qidirish ---
-        void FrameGrabber(object sender, EventArgs e)
+        private void FrameGrabber(object sender, EventArgs e)
         {
-            try
+            currentFrame = new Mat();
+            grabber.Retrieve(currentFrame);
+
+            using (var imageFrame = currentFrame.ToImage<Bgr, byte>())
             {
-                currentFrame = grabber.QueryFrame().Resize(320, 240, INTER.CV_INTER_CUBIC);
-                gray = currentFrame.Convert<Gray, Byte>();
+                if (imageFrame == null) return;
 
-                MCvAvgComp[][] facesDetected = gray.DetectHaarCascade(
-                    face, 1.2, 10, HAAR_DETECTION_TYPE.DO_CANNY_PRUNING, new Size(20, 20));
+                var gray = imageFrame.Convert<Gray, byte>();
 
-                if (facesDetected[0].Length > 0)
+                Rectangle[] facesDetected = face.DetectMultiScale(gray, 1.2, 10, Size.Empty);
+
+                if (facesDetected.Length > 0)
                 {
-                    MCvAvgComp f = facesDetected[0][0];
+                    Rectangle f = facesDetected[0];
+                    var result = gray.Copy(f).Resize(100, 100, Inter.Cubic);
+                    var arr = result.ToJpegData(95);
+                    //get a memory stream out of the byte array
+                    var stream = new MemoryStream(arr);
+                    //pass the memory stream to the bitmap ctor
+                    var bitmap = new Bitmap(stream);
+                    // ❌ ToBitmap() emas, ✅ result.Bitmap ishlatiladi
+                    picFace.Image = bitmap;
 
-                    result = currentFrame.Copy(f.rect).Convert<Gray, byte>().Resize(100, 100, INTER.CV_INTER_CUBIC);
-                    currentFrame.Draw(f.rect, new Bgr(Color.Green), 2);
-
-                    picFace.Image = result.ToBitmap();
-
-                    // Tanish
-                    if (trainingImages.Count > 0)
+                    // DB dan qidirish
+                    using (SqlConnection conn = new SqlConnection(connectionString))
                     {
-                        MCvTermCriteria termCrit = new MCvTermCriteria(ContTrain, 0.001);
-                        EigenObjectRecognizer recognizer = new EigenObjectRecognizer(
-                            trainingImages.ToArray(), labels.ToArray(), 3000, ref termCrit);
+                        conn.Open();
+                        string q = "SELECT TOP 1 * FROM PersonInfo WHERE Id=@id";
+                        SqlCommand cmd = new SqlCommand(q, conn);
+                        cmd.Parameters.AddWithValue("@id", txtid.Text);
+                        SqlDataReader reader = cmd.ExecuteReader();
 
-                        name = recognizer.Recognize(result);
-                        txtid.Text = name;
+                        if (reader.Read())
+                        {
+                            txtfamiliya.Text = reader["Familiya"].ToString();
+                            txtism.Text = reader["Ism"].ToString();
+                            txtsharif.Text = reader["Sharif"].ToString();
+                            txtunvoni.Text = reader["Unvon"].ToString();
+                            txtid.Text = reader["Id"].ToString();
+
+                            byte[] bytes = (byte[])reader["FaceImage"];
+                            picFace.Image = ByteArrayToImage(bytes);
+                        }
                     }
 
-                    // Agar txtid bo‘sh bo‘lsa yangi foydalanuvchi sifatida qabul qilamiz
-                    if (!string.IsNullOrEmpty(txtid.Text))
-                    {
-                        LoadUserFromDB(txtid.Text);
-                    }
-
-                    imageBoxFrameGrabber.Image = currentFrame;
-                    Application.Idle -= FrameGrabber;
-                }
-                else
-                {
-                    imageBoxFrameGrabber.Image = currentFrame;
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine("FrameGrabber error: " + ex.Message);
-            }
-        }
-
-        // --- Ma'lumotlarni DB dan olish ---
-        private void LoadUserFromDB(string userId)
-        {
-            using (SqlConnection connection = new SqlConnection(connectionString))
-            {
-                try
-                {
-                    connection.Open();
-                    string query = "SELECT * FROM Foydalanuvchilar WHERE UserId=@UserId";
-                    SqlCommand cmd = new SqlCommand(query, connection);
-                    cmd.Parameters.AddWithValue("@UserId", userId);
-                    SqlDataReader reader = cmd.ExecuteReader();
-
-                    if (reader.Read())
-                    {
-                        txtIsm.Text = reader["Ism"].ToString();
-                        txtFamiliya.Text = reader["Familiya"].ToString();
-                        txtSharif.Text = reader["Sharif"].ToString();
-                        txtUnvon.Text = reader["Unvon"].ToString();
-                        txtid.Text = reader["UserId"].ToString();
-
-                        byte[] imgBytes = (byte[])reader["Rasm"];
-                        picFace.Image = ByteArrayToImage(imgBytes);
-                    }
-                    else
-                    {
-                        MessageBox.Show("Bu foydalanuvchi bazada topilmadi. Yangi foydalanuvchi sifatida qo‘shishingiz mumkin.");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show("DB xatolik: " + ex.Message);
+                    grabber.ImageGrabbed -= FrameGrabber; // faqat 1 marta ishlaydi
                 }
             }
         }
+        #endregion
 
-        // --- Qo‘shish/Yangilash ---
-        private void btnAddPerson_Click(object sender, EventArgs e)
+        #region Add/Update
+        /*private async void btnAddPerson_Click(object sender, EventArgs e)
         {
-            if (string.IsNullOrWhiteSpace(txtid.Text) || txtid.Text.Length != 9)
+            if (string.IsNullOrEmpty(txtid.Text) || txtid.Text.Length != 9)
             {
-                MessageBox.Show("9 xonali ID kiriting!");
+                MessageBox.Show("ID 9 xonali son bo‘lishi kerak!");
                 return;
             }
 
-            byte[] faceImage = picFace.Image != null ? ImageToByteArray(picFace.Image) : null;
-
-            using (SqlConnection connection = new SqlConnection(connectionString))
+            List<byte[]> faces = new List<byte[]>();
+            for (int i = 0; i < 10; i++)
             {
-                try
+                currentFrame = new Mat();
+                grabber.Retrieve(currentFrame);
+
+                using (var frame = currentFrame.ToImage<Bgr, byte>())
                 {
-                    connection.Open();
-                    string checkQuery = "SELECT COUNT(*) FROM Foydalanuvchilar WHERE UserId=@UserId";
-                    SqlCommand checkCmd = new SqlCommand(checkQuery, connection);
-                    checkCmd.Parameters.AddWithValue("@UserId", txtid.Text);
-                    int count = (int)checkCmd.ExecuteScalar();
+                    var gray = frame.Convert<Gray, byte>();
+                    Rectangle[] detected = face.DetectMultiScale(gray, 1.2, 10, Size.Empty);
 
-                    string query;
-                    if (count > 0) // update
+                    if (detected.Length > 0)
                     {
-                        query = @"UPDATE Foydalanuvchilar 
-                                  SET Ism=@Ism, Familiya=@Familiya, Sharif=@Sharif, Unvon=@Unvon, Rasm=@Rasm
-                                  WHERE UserId=@UserId";
-                    }
-                    else // insert
-                    {
-                        query = @"INSERT INTO Foydalanuvchilar (Ism, Familiya, Sharif, Unvon, UserId, Rasm) 
-                                  VALUES (@Ism, @Familiya, @Sharif, @Unvon, @UserId, @Rasm)";
-                    }
+                        Rectangle f = detected[0];
+                        var result = gray.Copy(f).Resize(100, 100, Inter.Cubic);
 
-                    SqlCommand cmd = new SqlCommand(query, connection);
-                    cmd.Parameters.AddWithValue("@Ism", txtIsm.Text);
-                    cmd.Parameters.AddWithValue("@Familiya", txtFamiliya.Text);
-                    cmd.Parameters.AddWithValue("@Sharif", txtSharif.Text);
-                    cmd.Parameters.AddWithValue("@Unvon", txtUnvon.Text);
-                    cmd.Parameters.AddWithValue("@UserId", txtid.Text);
-                    cmd.Parameters.AddWithValue("@Rasm", (object)faceImage ?? DBNull.Value);
-
-                    cmd.ExecuteNonQuery();
-                    MessageBox.Show(count > 0 ? "Foydalanuvchi yangilandi." : "Yangi foydalanuvchi qo‘shildi.");
+                        // ❌ ToBitmap() emas
+                        faces.Add(ImageToByteArray(result.Bitmap));
+                    }
                 }
-                catch (Exception ex)
+                await Task.Delay(100);
+            }
+
+            if (faces.Count == 0)
+            {
+                MessageBox.Show("Yuz aniqlanmadi!");
+                return;
+            }
+
+            byte[] finalImg = faces[faces.Count - 1];
+
+            using (SqlConnection conn = new SqlConnection(connectionString))
+            {
+                conn.Open();
+                string check = "SELECT COUNT(*) FROM PersonInfo WHERE Id=@id";
+                SqlCommand c1 = new SqlCommand(check, conn);
+                c1.Parameters.AddWithValue("@id", txtid.Text);
+                int exists = (int)c1.ExecuteScalar();
+
+                string q = exists > 0
+                    ? "UPDATE PersonInfo SET Familiya=@f, Ism=@i, Sharif=@s, Unvon=@u, FaceImage=@img WHERE Id=@id"
+                    : "INSERT INTO PersonInfo (Id,Familiya,Ism,Sharif,Unvon,FaceImage) VALUES (@id,@f,@i,@s,@u,@img)";
+
+                SqlCommand cmd = new SqlCommand(q, conn);
+                cmd.Parameters.AddWithValue("@id", txtid.Text);
+                cmd.Parameters.AddWithValue("@f", txtfamiliya.Text);
+                cmd.Parameters.AddWithValue("@i", txtism.Text);
+                cmd.Parameters.AddWithValue("@s", txtsharif.Text);
+                cmd.Parameters.AddWithValue("@u", txtunvoni.Text);
+                cmd.Parameters.AddWithValue("@img", finalImg);
+                cmd.ExecuteNonQuery();
+            }
+
+            MessageBox.Show("Ma'lumot saqlandi!");
+        }
+        */
+
+        private async void btnAddPerson_Click(object sender, EventArgs e)
+        {
+            // ID daraxti: 9 xonali raqam bo'lishi kerak
+            if (string.IsNullOrWhiteSpace(txtid.Text) || !Regex.IsMatch(txtid.Text, @"^\d{9}$"))
+            {
+                MessageBox.Show("ID 9 xonali raqam bo'lishi kerak (masalan: 000000001).");
+                return;
+            }
+
+            if (grabber == null)
+            {
+                MessageBox.Show("Avval kamera ishga tushirilishi lozim (Qidirish tugmasi bilan).");
+                return;
+            }
+
+            List<byte[]> gathered = new List<byte[]>();
+
+            for (int i = 0; i < 10; i++)
+            {
+                Mat frame = new Mat();
+                grabber.Retrieve(frame);
+                if (frame.IsEmpty)
                 {
-                    MessageBox.Show("Xatolik: " + ex.Message);
+                    await Task.Delay(100); // kutib keyingi
+                    continue;
                 }
+                Mat gray = new Mat();
+                CvInvoke.CvtColor(frame, gray, ColorConversion.Bgr2Gray);
+                var rects = face.DetectMultiScale(gray, 1.1, 6, new Size(80, 80), Size.Empty);
+                if (rects.Length > 0)
+                {
+                    Mat faceMat = new Mat(frame, rects[0]);
+                    Mat faceGray = new Mat();
+                    CvInvoke.CvtColor(faceMat, faceGray, ColorConversion.Bgr2Gray);
+                    Mat faceResized = new Mat();
+                    CvInvoke.Resize(faceGray, faceResized, new Size(100, 100), 0, 0, Inter.Cubic);
+                    byte[] png = CvInvoke.Imencode(".png", faceResized);
+                    gathered.Add(png);
+                }
+                await Task.Delay(100);
+            }
+
+            if (gathered.Count == 0)
+            {
+                MessageBox.Show("Yuz topilmadi — rasm olinmadi.");
+                return;
+            }
+
+            // DB saqlash (insert yoki update)
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connectionString))
+                {
+                    conn.Open();
+
+                    // 1) PersonInfo mavjudligini tekshirish
+                    string check = "SELECT COUNT(*) FROM PersonInfo WHERE Id=@id";
+                    using (SqlCommand c = new SqlCommand(check, conn))
+                    {
+                        c.Parameters.AddWithValue("@id", txtid.Text);
+                        int exists = (int)c.ExecuteScalar();
+
+                        if (exists == 0)
+                        {
+                            // insert PersonInfo
+                            string ins = "INSERT INTO PersonInfo(Id, Familiya, Ism, Sharif, Unvon) VALUES(@id,@f,@i,@s,@u)";
+                            using (SqlCommand ci = new SqlCommand(ins, conn))
+                            {
+                                ci.Parameters.AddWithValue("@id", txtid.Text);
+                                ci.Parameters.AddWithValue("@f", (object)txtfamiliya.Text ?? DBNull.Value);
+                                ci.Parameters.AddWithValue("@i", (object)txtism.Text ?? DBNull.Value);
+                                ci.Parameters.AddWithValue("@s", (object)txtsharif.Text ?? DBNull.Value);
+                                ci.Parameters.AddWithValue("@u", (object)txtunvoni.Text ?? DBNull.Value);
+                                ci.ExecuteNonQuery();
+                            }
+                        }
+                        else
+                        {
+                            // update PersonInfo
+                            string upd = "UPDATE PersonInfo SET Familiya=@f, Ism=@i, Sharif=@s, Unvon=@u WHERE Id=@id";
+                            using (SqlCommand cu = new SqlCommand(upd, conn))
+                            {
+                                cu.Parameters.AddWithValue("@id", txtid.Text);
+                                cu.Parameters.AddWithValue("@f", (object)txtfamiliya.Text ?? DBNull.Value);
+                                cu.Parameters.AddWithValue("@i", (object)txtism.Text ?? DBNull.Value);
+                                cu.Parameters.AddWithValue("@s", (object)txtsharif.Text ?? DBNull.Value);
+                                cu.Parameters.AddWithValue("@u", (object)txtunvoni.Text ?? DBNull.Value);
+                                cu.ExecuteNonQuery();
+                            }
+
+                            // agar update bo'lsa, eski rasmlarni o'chirib yangilarini qo'yish (siz istasangiz saqlab qolishingiz ham mumkin)
+                            string del = "DELETE FROM PersonImages WHERE PersonId=@id";
+                            using (SqlCommand cd = new SqlCommand(del, conn))
+                            {
+                                cd.Parameters.AddWithValue("@id", txtid.Text);
+                                cd.ExecuteNonQuery();
+                            }
+                        }
+
+                        // End — end of existence check
+                        // 2) Insert images
+                        string insImg = "INSERT INTO PersonImages(PersonId, Img) VALUES(@id, @img)";
+                        foreach (var b in gathered)
+                        {
+                            using (SqlCommand ci2 = new SqlCommand(insImg, conn))
+                            {
+                                ci2.Parameters.AddWithValue("@id", txtid.Text);
+                                ci2.Parameters.AddWithValue("@img", b);
+                                ci2.ExecuteNonQuery();
+                            }
+                        }
+                    }
+                }
+
+                MessageBox.Show("Ma'lumotlar bazasiga rasm(lar) muvaffaqiyatli qo'shildi.");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Saqlashda xato: " + ex.Message);
             }
         }
 
-        // --- O‘chirish ---
+        #endregion
+
+        #region Delete
         private void picFace_DoubleClick(object sender, EventArgs e)
         {
             if (string.IsNullOrEmpty(txtid.Text)) return;
 
-            DialogResult dr = MessageBox.Show("Haqiqatan ham ushbu foydalanuvchini o‘chirasizmi?", "Delete", MessageBoxButtons.YesNo);
-            if (dr == DialogResult.Yes)
+            using (SqlConnection conn = new SqlConnection(connectionString))
             {
-                using (SqlConnection connection = new SqlConnection(connectionString))
-                {
-                    try
-                    {
-                        connection.Open();
-                        string query = "DELETE FROM Foydalanuvchilar WHERE UserId=@UserId";
-                        SqlCommand cmd = new SqlCommand(query, connection);
-                        cmd.Parameters.AddWithValue("@UserId", txtid.Text);
-                        cmd.ExecuteNonQuery();
-                        MessageBox.Show("Foydalanuvchi o‘chirildi.");
-
-                        txtIsm.Clear();
-                        txtFamiliya.Clear();
-                        txtSharif.Clear();
-                        txtUnvon.Clear();
-                        txtid.Clear();
-                        picFace.Image = null;
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show("Xatolik: " + ex.Message);
-                    }
-                }
+                conn.Open();
+                string q = "DELETE FROM PersonInfo WHERE Id=@id";
+                SqlCommand cmd = new SqlCommand(q, conn);
+                cmd.Parameters.AddWithValue("@id", txtid.Text);
+                cmd.ExecuteNonQuery();
             }
-        }
 
-        // --- Convert funksiyalar ---
-        private byte[] ImageToByteArray(Image image)
+            MessageBox.Show("Foydalanuvchi o‘chirildi!");
+        }
+        #endregion
+
+        #region Helpers
+        private byte[] ImageToByteArray(Image img)
         {
             using (MemoryStream ms = new MemoryStream())
             {
-                image.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                img.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
                 return ms.ToArray();
             }
         }
 
-        private Image ByteArrayToImage(byte[] byteArray)
+        private Image ByteArrayToImage(byte[] arr)
         {
-            using (MemoryStream ms = new MemoryStream(byteArray))
+            using (MemoryStream ms = new MemoryStream(arr))
             {
                 return Image.FromStream(ms);
             }
         }
+        #endregion
     }
 }

@@ -1,4 +1,4 @@
-﻿namespace MultiFaceRec
+﻿namespace FaceDBApp
 {
     partial class FrmPrincipal
     {
