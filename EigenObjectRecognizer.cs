@@ -49,7 +49,7 @@ namespace Emgu.CV
       /// <summary>
       /// Get the average Image. 
       /// </summary>
-      /// <remarks>The set method is primary used for deserialization, do not attemps to set it unless you know what you are doing</remarks>
+      /// <remarks>The set method is primary used for deserialization, do not atempts to set it unless you know what you are doing</remarks>
       public Image<Gray, Single> AverageImage
       {
          get { return _avgImage; }
@@ -59,7 +59,7 @@ namespace Emgu.CV
       /// <summary>
       /// Get the eigen values of each of the training image
       /// </summary>
-      /// <remarks>The set method is primary used for deserialization, do not attemps to set it unless you know what you are doing</remarks>
+      /// <remarks>The set method is primary used for deserialization, do not atempts to set it unless you know what you are doing</remarks>
       public Matrix<float>[] EigenValues
       {
          get { return _eigenValues; }
@@ -152,10 +152,10 @@ namespace Emgu.CV
 
          IntPtr[] inObjs = Array.ConvertAll<Image<Gray, Byte>, IntPtr>(trainingImages, delegate(Image<Gray, Byte> img) { return img.Ptr; });
 
-         if (termCrit.max_iter <= 0 || termCrit.max_iter > trainingImages.Length)
-            termCrit.max_iter = trainingImages.Length;
+         if (termCrit.MaxCount <= 0 || termCrit.MaxCount > trainingImages.Length)
+            termCrit.MaxCount = trainingImages.Length;
          
-         int maxEigenObjs = termCrit.max_iter;
+         int maxEigenObjs = termCrit.MaxCount;
 
          #region initialize eigen images
          eigenImages = new Image<Gray, float>[maxEigenObjs];
@@ -166,12 +166,21 @@ namespace Emgu.CV
 
          avg = new Image<Gray, Single>(width, height);
 
-         CvInvoke.cvCalcEigenObjects(
-             inObjs,
-             ref termCrit,
-             eigObjs,
-             null,
-             avg.Ptr);
+         // Create a Mat from the input images for PCA
+         Mat data = new Mat(trainingImages.Length, width * height, Emgu.CV.CvEnum.DepthType.Cv8U, 1);
+         for (int i = 0; i < trainingImages.Length; i++)
+         {
+            byte[] imgData = new byte[width * height];
+            Buffer.BlockCopy(trainingImages[i].ManagedArray, 0, imgData, 0, imgData.Length);
+            data.Row(i).SetTo(imgData);
+         }
+
+         CvInvoke.PCACompute(
+             data,
+             avg.Mat,
+             eigenImages[0].Mat,
+             maxEigenObjs
+         );
       }
 
       /// <summary>
@@ -183,10 +192,19 @@ namespace Emgu.CV
       /// <returns>Eigen values of the decomposed image</returns>
       public static float[] EigenDecomposite(Image<Gray, Byte> src, Image<Gray, Single>[] eigenImages, Image<Gray, Single> avg)
       {
-         return CvInvoke.cvEigenDecomposite(
-             src.Ptr,
-             Array.ConvertAll<Image<Gray, Single>, IntPtr>(eigenImages, delegate(Image<Gray, Single> img) { return img.Ptr; }),
-             avg.Ptr);
+         // Use PCAProject instead of the missing cvEigenDecomposite
+         int numComponents = eigenImages.Length;
+         Mat srcMat = new Mat(1, src.Width * src.Height, Emgu.CV.CvEnum.DepthType.Cv8U, 1);
+         byte[] imgData = new byte[src.Width * src.Height];
+         Buffer.BlockCopy(src.ManagedArray, 0, imgData, 0, imgData.Length);
+         srcMat.SetTo(imgData);
+
+         Mat result = new Mat();
+         CvInvoke.PCAProject(srcMat, avg.Mat, eigenImages[0].Mat, result);
+
+         float[] eigenValues = new float[numComponents];
+         result.CopyTo(eigenValues);
+         return eigenValues;
       }
       #endregion
 
@@ -197,12 +215,16 @@ namespace Emgu.CV
       /// <returns>The projected image</returns>
       public Image<Gray, Byte> EigenProjection(float[] eigenValue)
       {
+         // Use PCABackProject instead of the missing cvEigenProjection
+         Mat result = new Mat();
+         CvInvoke.PCABackProject(
+             new Matrix<float>(eigenValue),
+             _avgImage.Mat,
+             _eigenImages[0].Mat,
+             result
+         );
          Image<Gray, Byte> res = new Image<Gray, byte>(_avgImage.Width, _avgImage.Height);
-         CvInvoke.cvEigenProjection(
-             Array.ConvertAll<Image<Gray, Single>, IntPtr>(_eigenImages, delegate(Image<Gray, Single> img) { return img.Ptr; }),
-             eigenValue,
-             _avgImage.Ptr,
-             res.Ptr);
+         result.CopyTo(res);
          return res;
       }
 
@@ -217,7 +239,8 @@ namespace Emgu.CV
             return Array.ConvertAll<Matrix<float>, float>(_eigenValues,
                 delegate(Matrix<float> eigenValueI)
                 {
-                   return (float)CvInvoke.cvNorm(eigenValue.Ptr, eigenValueI.Ptr, Emgu.CV.CvEnum.NORM_TYPE.CV_L2, IntPtr.Zero);
+                   // Use CvInvoke.Norm instead of the missing CvInvoke.cvNorm
+                   return (float)CvInvoke.Norm(eigenValue, eigenValueI, Emgu.CV.CvEnum.NormType.L2);
                 });
       }
 

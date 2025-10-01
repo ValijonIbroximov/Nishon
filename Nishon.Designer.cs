@@ -52,6 +52,7 @@
             this.imageBoxFrameGrabber = new Emgu.CV.UI.ImageBox();
             this.target = new System.Windows.Forms.Panel();
             this.r5 = new System.Windows.Forms.PictureBox();
+            this.picFace1 = new System.Windows.Forms.PictureBox();
             ((System.ComponentModel.ISupportInitialize)(this.r10)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.g10)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.r9)).BeginInit();
@@ -68,6 +69,7 @@
             ((System.ComponentModel.ISupportInitialize)(this.imageBoxFrameGrabber)).BeginInit();
             this.target.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.r5)).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)(this.picFace1)).BeginInit();
             this.SuspendLayout();
             // 
             // btnSearchPerson
@@ -354,12 +356,21 @@
             this.r5.TabStop = false;
             this.r5.Visible = false;
             // 
+            // picFace1
+            // 
+            this.picFace1.Location = new System.Drawing.Point(585, 116);
+            this.picFace1.Name = "picFace1";
+            this.picFace1.Size = new System.Drawing.Size(100, 125);
+            this.picFace1.TabIndex = 25;
+            this.picFace1.TabStop = false;
+            // 
             // FrmPrincipal
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.BackgroundImage = global::MultiFaceRec.Properties.Resources.Background_nishon1;
             this.ClientSize = new System.Drawing.Size(1089, 530);
+            this.Controls.Add(this.picFace1);
             this.Controls.Add(this.btnSearchPerson);
             this.Controls.Add(this.btnAddPerson);
             this.Controls.Add(this.txtid);
@@ -390,6 +401,7 @@
             ((System.ComponentModel.ISupportInitialize)(this.imageBoxFrameGrabber)).EndInit();
             this.target.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize)(this.r5)).EndInit();
+            ((System.ComponentModel.ISupportInitialize)(this.picFace1)).EndInit();
             this.ResumeLayout(false);
             this.PerformLayout();
 
@@ -419,6 +431,7 @@
         private Emgu.CV.UI.ImageBox imageBoxFrameGrabber;
         private System.Windows.Forms.Panel target;
         private System.Windows.Forms.PictureBox r5;
+        private System.Windows.Forms.PictureBox picFace1;
     }
 }
 

@@ -43,7 +43,7 @@ namespace FaceDBApp
             if (string.IsNullOrEmpty(connectionString))
             {
                 // Default path
-                string dbFile = Path.Combine(Application.StartupPath, "FaceDB.mdf");
+                string dbFile = Path.Combine(System.Windows.Forms.Application.StartupPath, "FaceDB.mdf");
                 CreateDatabase(dbFile);
                 connectionString = $@"Data Source=(LocalDB)\MSSQLLocalDB;AttachDbFilename={dbFile};Integrated Security=True;Connect Timeout=30";
                 SaveConnectionString(connectionString);
@@ -142,7 +142,7 @@ namespace FaceDBApp
                     //pass the memory stream to the bitmap ctor
                     var bitmap = new Bitmap(stream);
                     // ❌ ToBitmap() emas, ✅ result.Bitmap ishlatiladi
-                    picFace.Image = bitmap;
+                    picFace1.Image = bitmap;
 
                     // DB dan qidirish
                     using (SqlConnection conn = new SqlConnection(connectionString))
@@ -162,7 +162,7 @@ namespace FaceDBApp
                             txtid.Text = reader["Id"].ToString();
 
                             byte[] bytes = (byte[])reader["FaceImage"];
-                            picFace.Image = ByteArrayToImage(bytes);
+                            picFace1.Image = ByteArrayToImage(bytes);
                         }
                     }
 
@@ -381,7 +381,7 @@ namespace FaceDBApp
         #endregion
 
         #region Helpers
-        private byte[] ImageToByteArray(Image img)
+        private byte[] ImageToByteArray(System.Drawing.Image img)
         {
             using (MemoryStream ms = new MemoryStream())
             {
@@ -390,11 +390,11 @@ namespace FaceDBApp
             }
         }
 
-        private Image ByteArrayToImage(byte[] arr)
+        private System.Drawing.Image ByteArrayToImage(byte[] arr)
         {
             using (MemoryStream ms = new MemoryStream(arr))
             {
-                return Image.FromStream(ms);
+                return System.Drawing.Image.FromStream(ms);
             }
         }
         #endregion

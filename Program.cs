@@ -1,20 +1,17 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Windows.Forms;
 
-namespace MultiFaceRec
+namespace FaceDBApp   // 🔹 bu yerda MultiFaceRec emas
 {
     static class Program
     {
-        /// <summary>
-        /// Punto de entrada principal para la aplicación.
-        /// </summary>
         [STAThread]
         static void Main()
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+
+            // FrmPrincipal formangizni ishga tushiramiz
             Application.Run(new FrmPrincipal());
         }
     }
